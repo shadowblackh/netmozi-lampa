@@ -1,133 +1,134 @@
 (function () {
     'use strict';
 
-    var ID = 'netmozi_hu';
-    var TITLE = 'NetMozi HU';
-    var COMPONENT_READY = false;
-    var MENU_READY = false;
-    var INITIALIZED = false;
+    function NetMozi() {
+        var network = new Lampa.Reguest();
+        var host = 'https://netmozi.com/';
+        // Используем публичный CORS-прокси Lampa (или укажите свой)
+        var corsProxy = 'https://cors.lamptv.ru/'; 
 
-    var ICON =
-        '<svg xmlns="http://www.w3.org/2000/svg" ' +
-        'viewBox="0 0 24 24" width="24" height="24" ' +
-        'fill="none" stroke="currentColor" stroke-width="2">' +
-        '<rect x="3" y="3" width="18" height="18" rx="3"/>' +
-        '<path d="M10 8l6 4-6 4z"/>' +
-        '</svg>';
-
-    function log(message) {
-        console.log('[NetMozi HU] ' + message);
-    }
-
-    function openScreen() {
-        try {
-            Lampa.Activity.push({
-                url: '',
-                title: TITLE,
-                component: ID,
-                page: 1
+        this.start = function () {
+            Lampa.Component.add('netmozi', Component);
+            
+            Lampa.Listener.follow('app', function (e) {
+                if (e.type === 'ready') {
+                    Lampa.Menu.add({
+                        title: 'NetMozi',
+                        icon: '<svg height="24" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg"><path d="M0 0h24v24H0z" fill="none"/><path d="M18 4l2 4h-3l-2-4h-2l2 4h-3l-2-4H8l2 4H7L5 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V4h-4z"/></svg>',
+                        component: 'netmozi',
+                        page: 1
+                    });
+                }
             });
-        } catch (error) {
-            log('Activity error: ' + (error.message || error));
+        };
+
+        function Component(object) {
+            var comp = this;
+            var scroll = new Lampa.Scroll({ mask: true });
+            var items = [];
+            var html = $('<div></div>');
+            var body = $('<div class="category-full"></div>');
+
+            this.create = function () {
+                this.activity.loader(true);
+                
+                // Запрос к главной странице через CORS-прокси
+                var targetUrl = corsProxy + host;
+
+                network.native(targetUrl, function (string) {
+                    var dom = $($.parseHTML(string));
+                    // Подбор контейнеров с фильмами
+                    var cards = dom.find('article, .movie-item, .item, .post');
+
+                    cards.each(function () {
+                        var card = $(this);
+                        var title = card.find('.title, h2, h3, a').first().text().trim();
+                        var img = card.find('img').attr('src') || card.find('img').attr('data-src');
+                        var url = card.find('a').attr('href');
+
+                        if (img && !img.startsWith('http')) {
+                            img = host + img.replace(/^\//, '');
+                        }
+
+                        if (title && url) {
+                            var item = Lampa.Template.get('card', {
+                                title: title,
+                                release_year: ''
+                            });
+
+                            if (img) item.find('.card__img').attr('src', img);
+                            
+                            item.on('hover:enter', function () {
+                                comp.openMovie(url, title);
+                            });
+
+                            body.append(item);
+                            items.push(item);
+                        }
+                    });
+
+                    if (items.length === 0) {
+                        comp.activity.empty('Контент не найден / Nem található tartalom');
+                    } else {
+                        scroll.append(body);
+                        html.append(scroll.render());
+                    }
+                    
+                    comp.activity.loader(false);
+                    Lampa.Controller.enable('content');
+                }, function () {
+                    comp.activity.empty('Ошибка сети / Hálózati hiba');
+                    comp.activity.loader(false);
+                });
+
+                return html;
+            };
+
+            this.openMovie = function (url, title) {
+                var fullUrl = url.startsWith('http') ? url : host + url.replace(/^\//, '');
+                var proxyMovieUrl = corsProxy + fullUrl;
+
+                Lampa.Activity.push({
+                    url: fullUrl,
+                    title: title,
+                    component: 'full',
+                    page: 1
+                });
+
+                network.native(proxyMovieUrl, function (string) {
+                    var dom = $($.parseHTML(string));
+                    var iframeSrc = dom.find('iframe').attr('src');
+
+                    if (iframeSrc) {
+                        Lampa.Player.play({
+                            title: title,
+                            url: iframeSrc
+                        });
+                    } else {
+                        Lampa.Noty.show('Плеер не найден / Videó nem található');
+                    }
+                });
+            };
+
+            this.start = function () {
+                Lampa.Controller.add('content', {
+                    toggle: function () {
+                        Lampa.Controller.collectionSet(scroll.render());
+                        Lampa.Controller.collectionFocus(items.length ? items[0][0] : false, scroll.render());
+                    },
+                    left: function () { Lampa.Controller.toggle('menu'); },
+                    up: function () { Lampa.Controller.toggle('head'); }
+                });
+                Lampa.Controller.enable('content');
+            };
         }
-    }
-
-    function registerComponent() {
-        if (COMPONENT_READY) return true;
-
-        if (!Lampa.Component || !Lampa.Activity) {
-            return false;
-        }
-
-        try {
-            Lampa.Component.add(ID, function () {
-                var html;
-
-                this.create = function () {
-                    html = $('<div class="netmozi-hu-screen" ' +
-                        'style="padding:2em;">' +
-                        '<div style="font-size:1.5em;font-weight:bold;">' +
-                        'NetMozi HU</div>' +
-                        '<div style="margin-top:1em;">' +
-                        'A plugin sikeresen betöltődött.</div>' +
-                        '<div style="margin-top:0.5em;">' +
-                        'A magyar katalógus integrációja következik.</div>' +
-                        '</div>';
-
-                    return html;
-                };
-
-                this.start = function () {};
-
-                this.pause = function () {};
-
-                this.stop = function () {
-                    if (html) html.remove();
-                };
-
-                this.destroy = function () {
-                    if (html) html.remove();
-                };
-            });
-
-            COMPONENT_READY = true;
-            log('Component registered');
-            return true;
-        } catch (error) {
-            log('Component error: ' + (error.message || error));
-            return false;
-        }
-    }
-
-    function addMenuButton() {
-        if (MENU_READY) return true;
-
-        if (!Lampa.Menu ||
-            typeof Lampa.Menu.addButton !== 'function') {
-            log('Menu.addButton is unavailable');
-            return false;
-        }
-
-        try {
-            Lampa.Menu.addButton(ICON, TITLE, openScreen);
-            MENU_READY = true;
-            log('Menu button added');
-            return true;
-        } catch (error) {
-            log('Menu error: ' + (error.message || error));
-            return false;
-        }
-    }
-
-    function init() {
-        if (INITIALIZED) return true;
-
-        if (!window.Lampa) return false;
-
-        if (!registerComponent()) return false;
-        if (!addMenuButton()) return false;
-
-        INITIALIZED = true;
-        window.netmozi_hu_plugin_loaded = true;
-
-        log('Plugin initialized');
-        return true;
     }
 
     if (window.appready) {
-        init();
-    } else if (window.Lampa && Lampa.Listener) {
-        Lampa.Listener.follow('app', function (event) {
-            if (event.type === 'ready') init();
+        new NetMozi().start();
+    } else {
+        Lampa.Listener.follow('app', function (e) {
+            if (e.type === 'ready') new NetMozi().start();
         });
     }
-
-    var attempts = 0;
-    var timer = setInterval(function () {
-        attempts++;
-
-        if (init() || attempts >= 40) {
-            clearInterval(timer);
-        }
-    }, 1000);
 })();
